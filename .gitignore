@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Virtual environments (uv)
+.venv/
+
+# Secrets - NEVER commit your real API credentials
+.env
+
+# Local data artifacts (keep the directory placeholders)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/processed/jobs/
+!data/processed/history/
+data/processed/jobs/*
+data/processed/history/*
+!data/processed/jobs/.gitkeep
+!data/processed/history/.gitkeep
+
+# Notebooks
+.ipynb_checkpoints/
+*.ipynb~
+
+# OS
+.DS_Store
