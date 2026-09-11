@@ -10,20 +10,24 @@ dist/
 # Virtual environments (uv)
 .venv/
 
-# Secrets - NEVER commit your real API credentials
+# Secrets - NEVER commit your real API credentials nor Google service accounts
 .env
+*.json  # service-account JSON keys (keep out of git)
 
 # Local data artifacts (keep the directory placeholders)
 data/raw/*
-data/processed/*
 !data/raw/.gitkeep
+data/processed/*
 !data/processed/.gitkeep
 !data/processed/jobs/
 !data/processed/history/
 data/processed/jobs/*
-data/processed/history/*
 !data/processed/jobs/.gitkeep
+data/processed/history/*
 !data/processed/history/.gitkeep
+data/analysis/*
+!data/analysis/.gitkeep
+data/*.duckdb
 
 # Notebooks
 .ipynb_checkpoints/

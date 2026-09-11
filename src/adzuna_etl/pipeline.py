@@ -1,22 +1,29 @@
-"""Executive pipeline: EXTRACT -> CLEAN -> VALIDATE -> LOAD.
+"""Executive pipeline: EXTRACT -> CLEAN -> VALIDATE -> LOAD (CSV + DuckDB + Sheets).
 
 The stages are intentionally thin, individually importable modules so each
-can be reused or replaced independently when the data-warehouse phase lands
-(e.g. swap the CSV loader for a SQL loader without touching clean/validate).
+can be reused or replaced independently when the warehouse phase lands.
+The pipeline now also:
+  * enriches the cleaned frame with AI-skills/role-class flags,
+  * upserts clean + analysis data into a DuckDB warehouse (idempotent),
+  * optionally pushes the analysis views to Google Sheets for Looker Studio.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+from adzuna_etl.analysis.enrich import enrich_jobs_with_ai
 from adzuna_etl.api_client import AdzunaApiClient, AdzunaApiError
 from adzuna_etl.clean import clean_jobs
 from adzuna_etl.config import Settings, get_settings
 from adzuna_etl.extract import ExtractionResult, Extractor
-from adzuna_etl.load import CsvLoader
+from adzuna_etl.load import CsvLoader, _atomic_write_df
+from adzuna_etl.sheets_export import SheetsExporter, dry_run_preview
 from adzuna_etl.validate import ValidationReport, validate_jobs
+from adzuna_etl.warehouse import Warehouse, build_export_frames
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +38,10 @@ class PipelineResult:
     cleaned_rows_count: int
     cleaning_report: dict[str, int]
     validation: ValidationReport
-    files_written: list[str]
+    files_written: list[str] = field(default_factory=list)
+    analysis_rows: int = 0
+    db_path: str | None = None
+    sheets_exported: list[str] | None = None
 
 
 class EtlPipeline:
@@ -54,11 +64,40 @@ class EtlPipeline:
         validation = validate_jobs(clean_df, self.settings)
         self._log_validation(validation)
 
+        if not validation.passed and self.settings.fail_on_validation:
+            raise RuntimeError("Validation FAILED - data was not loaded (fail_on_validation=true)")
+
         loader = CsvLoader(self.settings)
         files_written = loader.save_all(extraction, clean_df)
 
-        if not validation.passed and self.settings.fail_on_validation:
-            raise RuntimeError("Validation FAILED - data was not loaded (fail_on_validation=true)")
+        # ---- AI-skills analysis + database + sheets ---------------------------
+        analysis_df = enrich_jobs_with_ai(clean_df)
+        sheets_exported: list[str] | None = None
+        db_path_str: str | None = None
+
+        if self.settings.db_path:
+            db = Warehouse(self.settings.db_path)
+            try:
+                db.upsert_jobs(clean_df)
+                db.upsert_analysis(analysis_df)
+                frames = build_export_frames(db)
+            finally:
+                db.close()
+
+            db_path_str = str(self.settings.db_path)
+            files_written.append(db_path_str)
+            files_written.extend(self._write_analysis_artifacts(analysis_df, frames))
+
+            if self.settings.export_to_sheets:
+                if self.settings.sheets_dry_run:
+                    dry_run_preview(frames)
+                    sheets_exported = list(frames)
+                else:
+                    exporter = SheetsExporter(
+                        self.settings.google_sheets_credentials,
+                        self.settings.google_sheets_key,
+                    )
+                    sheets_exported = exporter.export_all(frames)
 
         return PipelineResult(
             ingest_date=extraction.ingested_at.date().isoformat(),
@@ -68,9 +107,33 @@ class EtlPipeline:
             cleaning_report=cleaning_report,
             validation=validation,
             files_written=files_written,
+            analysis_rows=len(analysis_df),
+            db_path=db_path_str,
+            sheets_exported=sheets_exported,
         )
 
     # -- internals ---------------------------------------------------------------
+    def _write_analysis_artifacts(
+        self, analysis_df: Any, frames: dict[str, Any]
+    ) -> list[str]:
+        """Persist the analysis flags + export views as CSVs under data/analysis/."""
+        from datetime import datetime, timezone
+
+        out_dir = self.settings.analysis_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+        written: list[str] = []
+
+        flags_path = out_dir / f"ai_job_flags_{stamp}.csv"
+        _atomic_write_df(analysis_df, flags_path)
+        written.append(str(flags_path))
+
+        for name, frame in frames.items():
+            path = out_dir / f"{name}.csv"
+            _atomic_write_df(frame, path)
+            written.append(str(path))
+        return written
+
     def _build_client(self) -> AdzunaApiClient:
         settings = self.settings
         if settings.mock_mode:
@@ -93,12 +156,14 @@ class EtlPipeline:
     @staticmethod
     def _log_validation(report: ValidationReport) -> None:
         for check in report.checks:
-            if check["status"] == "PASS":
-                logger.info("  [PASS] %s: %s", check["name"], check["detail"])
-            elif check["status"] == "WARN":
-                logger.warning("  [WARN] %s: %s", check["name"], check["detail"])
+            status = check["status"]
+            message = f"  [{status}] {check['name']}: {check['detail']}"
+            if status == "PASS":
+                logger.info(message)
+            elif status == "WARN":
+                logger.warning(message)
             else:
-                logger.error("  [FAIL] %s: %s", check["name"], check["detail"])
+                logger.error(message)
 
 
 __all__ = ["EtlPipeline", "PipelineResult"]

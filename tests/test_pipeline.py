@@ -56,7 +56,10 @@ def test_settings_parses_comma_separated_countries():
 def test_pipeline_requires_credentials_for_live_mode():
     from adzuna_etl.api_client import AdzunaApiError
 
-    settings = Settings(data_dir="/tmp/adz-x")  # no credentials
+    # Explicit empty credentials override any real values in .env so the test
+    # never touches the live API and always hits the guard clause.
+    settings = Settings(app_id="", app_key="", data_dir="/tmp/adz-x")
+    assert not settings.has_credentials
     pipeline = EtlPipeline(settings)
     try:
         pipeline._build_client()
@@ -64,3 +67,36 @@ def test_pipeline_requires_credentials_for_live_mode():
         pass
     else:  # pragma: no cover
         raise AssertionError("expected AdzunaApiError for missing credentials")
+
+def test_mock_ai_trend_is_recovered(tmp_path):
+    """The mock encodes a rising AI-mention trend; the analysis must recover it."""
+    from datetime import datetime, timezone
+
+    from adzuna_etl.analysis.aggregate import weekly_share
+    from adzuna_etl.analysis.enrich import enrich_jobs_with_ai
+    from adzuna_etl.clean import clean_jobs
+    from adzuna_etl.mock_client import MockAdzunaClient
+
+    today = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
+    client = MockAdzunaClient(
+        start_date="2026-01-01", rows_per_country=4000, countries=("gb",), seed=7, today=today
+    )
+    jobs, page = [], 1
+    while True:
+        batch = client.fetch_page("gb", page, results_per_page=50)["results"]
+        jobs.extend(batch)
+        if not batch:
+            break
+        page += 1
+
+    settings = Settings(mock_mode=True, start_date="2026-01-01", data_dir=tmp_path)
+    clean, _ = clean_jobs(jobs, settings, today)
+    assert not clean.empty
+
+    analysis = enrich_jobs_with_ai(clean)
+    weekly = weekly_share(analysis)
+    tech = weekly[weekly["role_class"] == "technical"].sort_values("week")
+    assert len(tech) > 4
+    early = tech["ai_share"].head(4).mean()
+    late = tech["ai_share"].tail(4).mean()
+    assert late > early + 0.05, f"encoded rise not recovered: early={early:.3f} late={late:.3f}"

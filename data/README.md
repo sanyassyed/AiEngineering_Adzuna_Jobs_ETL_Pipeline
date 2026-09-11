@@ -12,3 +12,13 @@ This directory is **git-ignored**; it holds data artifacts produced by the pipel
 
 The cleaned partitions are the natural **incremental boundaries** for the future
 data-warehouse loader: each file is the delta produced by one pipeline run.
+| Path                          | Layer    | Content                                                     |
+| ----------------------------- | -------- | ------------------------------------------------------------ |
+| `analysis/ai_job_flags_*.csv` | Analysis | Per-snapshot role_class + AI-skill mention flags.            |
+| `analysis/ai_share_weekly.csv`| Analysis | Weekly AI-mention share by country x role class.            |
+| `analysis/ai_share_latest.csv`| Analysis | Latest-week share (country x role class).                   |
+| `analysis/ai_skill_counts.csv`| Analysis | Per-group AI-skill mention totals by country x role class.  |
+| `adzuna.duckdb`               | Warehouse| DuckDB with fact_job_snapshot + analysis_job_ai_flags + views.| 
+
+These analysis outputs are exactly what `adzuna-etl --export-sheets` pushes to
+Google Sheets for Looker Studio.

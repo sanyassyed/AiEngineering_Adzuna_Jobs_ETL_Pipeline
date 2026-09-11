@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "adzuna-etl"
-version = "0.1.0"
-description = "ETL pipeline that extracts job ads from the Adzuna API, cleans and validates them, and loads them to CSV. Designed to scale to incremental data-warehouse loads and SCD dimensional modelling."
+version = "0.2.0"
+description = "ETL pipeline: Adzuna API -> raw/cleaned CSV -> DuckDB -> Google Sheets / Looker Studio. Built for AI-skills demand analysis and future incremental warehouse loads."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-keywords = ["etl", "adzuna", "jobs", "data-engineering", "pipeline"]
+keywords = ["etl", "adzuna", "jobs", "data-engineering", "pipeline", "ai-skills"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -17,18 +17,20 @@ classifiers = [
     "Topic :: Database",
 ]
 dependencies = [
+    "duckdb>=1.0",
+    "google-auth>=2.30",
+    "gspread>=6.0",
     "pandas>=2.0,<3",
     "pydantic>=2.5",
     "pydantic-settings>=2.1",
     "python-dotenv>=1.0",
     "requests>=2.31",
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]
-# Future phases (data warehouse / analytical layer). Opt-in later with:
-#   uv sync --extra dw
+# Optional integrations for the later warehouse phase.
 dw = [
-    "duckdb>=0.10",
     "pyarrow>=15.0",
     "sqlalchemy>=2.0",
 ]
